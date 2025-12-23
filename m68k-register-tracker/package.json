@@ -1,0 +1,37 @@
+{
+  "name": "m68k-register-tracker",
+  "displayName": "M68K Register Tracker",
+  "description": "Live register usage tracking for Motorola 68000 assembly - highlights register preservation issues",
+  "version": "0.0.1",
+  "license": "GPL-3.0",
+  "repository": {
+    "type": "git",
+    "url": ""
+  },
+  "engines": {
+    "vscode": "^1.60.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Linters"
+  ],
+  "activationEvents": [
+    "onLanguage:m68k"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "M68K Register Tracker",
+      "properties": {
+        "m68kRegisterTracker.enable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable register tracking CodeLens"
+        }
+      }
+    }
+  },
+  "extensionDependencies": [
+    "prb28.amiga-assembly"
+  ]
+}
