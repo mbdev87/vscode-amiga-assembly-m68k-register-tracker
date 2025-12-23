@@ -6,7 +6,7 @@
   "license": "GPL-3.0",
   "repository": {
     "type": "git",
-    "url": ""
+    "url": "https://github.com/mbdev87/vscode-amiga-assembly-m68k-register-tracker"
   },
   "engines": {
     "vscode": "^1.60.0"
