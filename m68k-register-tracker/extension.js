@@ -54,41 +54,79 @@ class RegisterAnalyzer {
         return Array.from(saved);
     }
 
-    // figure out if instruction writes to a register
+    // check if instruction modifies a register
     isModifying(line, reg) {
-        // m68k is source,dest format
-        // only care if reg is destination
-
         const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith(';')) return false;
 
-        if (trimmed.startsWith(';')) return false;
-
-        // movem to stack is reading not writing
-        if (trimmed.match(/movem.*-\(sp\)/i)) return false;
-
-        // movem from stack IS writing
-        const movemRestore = trimmed.match(/movem.*\(sp\)\+\s*,\s*(.+)/i);
-        if (movemRestore) {
-            return movemRestore[1].toUpperCase().includes(reg);
+        // WHITELIST: only these instructions can modify registers
+        const modifyingInstructions = /^\s*(move|movea|lea|add|sub|mulu|muls|divu|divs|and|or|eor|not|neg|clr|ext|swap|exg|asl|asr|lsl|lsr|rol|ror|addq|subq|adda|suba|addi|subi|andi|ori|eori|link|unlk)\b/i;
+        if (!trimmed.match(modifyingInstructions)) {
+            return false; // not a modifying instruction
         }
 
-        // two operand: dest is second one
-        const twoOp = trimmed.match(/^\s*\w+\.[bwl]?\s+[^,]+,\s*(.+?)(?:;|$)/i);
+        // IGNORE stack save/restore - they're not modifications we care about
+        if (trimmed.match(/[,\s]-(sp)|[(]sp[)]\+/i)) {
+            return false;
+        }
+
+        // get destination operand
+        let dest = null;
+        const twoOp = trimmed.match(/^\s*\w+\.[bwl]?\s+[^,]+,\s*([^\s;]+)/i);
         if (twoOp) {
-            const dest = twoOp[1].trim();
-            return dest.toUpperCase().includes(reg);
+            dest = twoOp[1].trim();
+        } else {
+            const oneOp = trimmed.match(/^\s*\w+\.[bwl]?\s+([^\s;]+)/i);
+            if (oneOp) {
+                dest = oneOp[1].trim();
+            }
         }
 
-        // single operand instructions that modify
-        // NOTE: tst doesn't modify!
-        const oneOpModify = trimmed.match(/^\s*(clr|neg|not|suba|adda|addq|subq|asl|asr|lsl|lsr|rol|ror)\.[bwl]?\s+(.+?)(?:;|$)/i);
-        if (oneOpModify) {
-            const dest = oneOpModify[2].trim();
-            return dest.toUpperCase().includes(reg);
+        if (!dest) return false;
+
+        const upper = dest.toUpperCase();
+
+        // exact match and not in parentheses (addressing mode)
+        if (upper === reg && !upper.includes('(')) return true;
+
+        return false;
+    }
+
+    // check if register is in movem list (handles ranges like d2-d7)
+    isRegInList(reg, regList) {
+        const parts = regList.split('/');
+        for (const part of parts) {
+            const trimmed = part.trim();
+            if (trimmed.includes('-')) {
+                const [start, end] = trimmed.split('-').map(r => r.trim().toUpperCase());
+                const type = start[0];
+                if (reg[0] !== type) continue;
+                const regNum = parseInt(reg[1]);
+                const startNum = parseInt(start[1]);
+                const endNum = parseInt(end[1]);
+                if (regNum >= startNum && regNum <= endNum) return true;
+            } else if (trimmed.toUpperCase() === reg) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // check if reg is actual destination (not in addressing mode)
+    isDestinationReg(reg, dest) {
+        const upper = dest.toUpperCase();
+
+        // if dest is just the register name: "d0", "a4"
+        if (upper === reg) return true;
+
+        // if dest starts with register (like d0-d3 in movem)
+        if (upper.startsWith(reg) && (dest.length === 2 || dest[2] === '-' || dest[2] === '/')) {
+            return true;
         }
 
-        // tst, cmp just read
-        if (trimmed.match(/^\s*(tst|cmp)\b/i)) {
+        // if register is in parentheses, it's addressing mode (reading)
+        // (a4), (8,a2), -(sp), (sp)+ etc - NOT modifying the register
+        if (upper.includes('(') && upper.includes(reg)) {
             return false;
         }
 
@@ -372,9 +410,9 @@ function updateDecorations(editor) {
                         unsafeLines.push({
                             range,
                             hoverMessage: new vscode.MarkdownString(
-                                `⚠️ **Register ${reg} modified without being saved to stack!**\n\n` +
-                                `Preserved registers (d2-d7, a2-a6) must be saved before modification.\n\n` +
-                                `**Fix:**\n\`\`\`m68k\n${example}\n\`\`\``
+                                `⚠️ **Register ${reg} modified without stack save**\n\n` +
+                                `Please double-check if this is intentional. If not, preserved registers (d2-d7, a2-a6) should be saved before modification.\n\n` +
+                                `**Save/restore pattern:**\n\`\`\`m68k\n${example}\n\`\`\``
                             )
                         });
                         break; // one per line is enough
@@ -400,19 +438,19 @@ function activate(context) {
         { pattern: '**/*.asm', scheme: 'file' }
     ];
 
-    // setup decoration style for unsafe lines
+    // setup decoration style for unsafe lines (orange warning, not red error)
     unsafeRegisterDecorationType = vscode.window.createTextEditorDecorationType({
         isWholeLine: false,
-        overviewRulerColor: 'rgba(255, 0, 0, 0.8)',
+        overviewRulerColor: 'rgba(255, 165, 0, 0.8)',
         overviewRulerLane: vscode.OverviewRulerLane.Right,
         light: {
-            backgroundColor: 'rgba(255, 0, 0, 0.05)',
-            borderColor: 'rgba(255, 0, 0, 0.2)',
+            backgroundColor: 'rgba(255, 165, 0, 0.08)',
+            borderColor: 'rgba(255, 165, 0, 0.3)',
             border: '1px solid'
         },
         dark: {
-            backgroundColor: 'rgba(255, 0, 0, 0.1)',
-            borderColor: 'rgba(255, 0, 0, 0.3)',
+            backgroundColor: 'rgba(255, 165, 0, 0.12)',
+            borderColor: 'rgba(255, 165, 0, 0.4)',
             border: '1px solid'
         }
     });
